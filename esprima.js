@@ -166,7 +166,8 @@
         VariableDeclaration: 'VariableDeclaration',
         VariableDeclarator: 'VariableDeclarator',
         WhileStatement: 'WhileStatement',
-        WithStatement: 'WithStatement'
+        WithStatement: 'WithStatement',
+        YieldExpression: 'YieldExpression'
     };
 
     PlaceHolders = {
@@ -194,6 +195,7 @@
         IllegalContinue: 'Illegal continue statement',
         IllegalBreak: 'Illegal break statement',
         IllegalReturn: 'Illegal return statement',
+        IllegalYield: 'Illegal yield expression',
         StrictModeWith: 'Strict mode code may not include a with statement',
         StrictCatchVariable: 'Catch variable may not be eval or arguments in strict mode',
         StrictVarName: 'Variable name may not be eval or arguments in strict mode',
@@ -1946,25 +1948,25 @@
             return this;
         },
 
-        finishFunctionDeclaration: function (id, params, defaults, body) {
+        finishFunctionDeclaration: function (id, params, defaults, body, generator) {
             this.type = Syntax.FunctionDeclaration;
             this.id = id;
             this.params = params;
             this.defaults = defaults;
             this.body = body;
-            this.generator = false;
+            this.generator = generator;
             this.expression = false;
             this.finish();
             return this;
         },
 
-        finishFunctionExpression: function (id, params, defaults, body) {
+        finishFunctionExpression: function (id, params, defaults, body, generator) {
             this.type = Syntax.FunctionExpression;
             this.id = id;
             this.params = params;
             this.defaults = defaults;
             this.body = body;
-            this.generator = false;
+            this.generator = generator;
             this.expression = false;
             this.finish();
             return this;
@@ -2272,6 +2274,14 @@
             this.type = Syntax.ImportDeclaration;
             this.specifiers = specifiers;
             this.source = src;
+            this.finish();
+            return this;
+        },
+
+        finishYieldExpression: function (argument, delegate) {
+            this.type = Syntax.YieldExpression;
+            this.arguments = argument;
+            this.delegate = delegate;
             this.finish();
             return this;
         }
@@ -2594,6 +2604,7 @@
             if (match('=')) {
                 lex();
                 init = parseAssignmentExpression();
+
                 return node.finishProperty(
                     'init', key, false,
                     new WrappingNode(key).finishAssignmentPattern(key, init), false, false);
@@ -2684,7 +2695,7 @@
 
     // 11.1.5 Object Initialiser
 
-    function parsePropertyFunction(node, paramInfo) {
+    function parsePropertyFunction(node, paramInfo, isGenerator) {
         var previousStrict, body;
 
         isAssignmentTarget = isBindingElement = false;
@@ -2700,14 +2711,20 @@
         }
 
         strict = previousStrict;
-        return node.finishFunctionExpression(null, paramInfo.params, paramInfo.defaults, body);
+        return node.finishFunctionExpression(null, paramInfo.params, paramInfo.defaults, body, isGenerator);
     }
 
     function parsePropertyMethodFunction() {
-        var params, method, node = new Node();
+        var params, method, node = new Node(),
+            previousAllowYield = state.allowYield;
 
+        state.allowYield = false;
         params = parseParams();
-        method = parsePropertyFunction(node, params);
+        state.allowYield = previousAllowYield;
+
+        state.allowYield = false;
+        method = parsePropertyFunction(node, params, false);
+        state.allowYield = previousAllowYield;
 
         return method;
     }
@@ -2765,7 +2782,8 @@
     // In order to avoid back tracking, it returns `null` if the position is not a MethodDefinition and the caller
     // is responsible to visit other options.
     function tryParseMethodDefinition(token, key, computed, node) {
-        var value, options, methodNode;
+        var value, options, methodNode, params,
+            previousAllowYield = state.allowYield;
 
         if (token.type === Token.Identifier) {
             // check for `get` and `set`;
@@ -2776,13 +2794,17 @@
                 methodNode = new Node();
                 expect('(');
                 expect(')');
+
+                state.allowYield = false;
                 value = parsePropertyFunction(methodNode, {
                     params: [],
                     defaults: [],
                     stricted: null,
                     firstRestricted: null,
                     message: null
-                });
+                }, false);
+                state.allowYield = previousAllowYield;
+
                 return node.finishProperty('get', key, computed, value, false, false);
             } else if (token.value === 'set' && lookaheadPropertyName()) {
                 computed = match('[');
@@ -2800,19 +2822,38 @@
                 if (match(')')) {
                     tolerateUnexpectedToken(lookahead);
                 } else {
+                    state.allowYield = false;
                     parseParam(options);
+                    state.allowYield = previousAllowYield;
                     if (options.defaultCount === 0) {
                         options.defaults = [];
                     }
                 }
                 expect(')');
 
-                value = parsePropertyFunction(methodNode, options);
+                state.allowYield = false;
+                value = parsePropertyFunction(methodNode, options, false);
+                state.allowYield = previousAllowYield;
+
                 return node.finishProperty('set', key, computed, value, false, false);
             }
+        } else if (token.type === Token.Punctuator && token.value === '*' && lookaheadPropertyName()) {
+            computed = match('[');
+            key = parseObjectPropertyKey();
+            methodNode = new Node();
+
+            state.allowYield = false;
+            params = parseParams();
+            state.allowYield = previousAllowYield;
+
+            state.allowYield = true;
+            value = parsePropertyFunction(methodNode, params, true);
+            state.allowYield = previousAllowYield;
+
+            return node.finishProperty('init', key, computed, value, true, false);
         }
 
-        if (match('(')) {
+        if (key && match('(')) {
             value = parsePropertyMethodFunction();
             return node.finishProperty('init', key, computed, value, true, false);
         }
@@ -2836,13 +2877,21 @@
         var token = lookahead, node = new Node(), computed, key, maybeMethod, value;
 
         computed = match('[');
-        key = parseObjectPropertyKey();
+        if (match('*')) {
+            lex();
+        } else {
+            key = parseObjectPropertyKey();
+        }
         maybeMethod = tryParseMethodDefinition(token, key, computed, node);
 
         if (maybeMethod) {
             checkProto(maybeMethod.key, maybeMethod.computed, hasProto);
             // finished
             return maybeMethod;
+        }
+
+        if (!key) {
+            throwUnexpectedToken(lookahead);
         }
 
         // init property or short hand property.
@@ -3608,6 +3657,33 @@
         return node.finishArrowFunctionExpression(options.params, options.defaults, body, body.type !== Syntax.BlockStatement);
     }
 
+    // [ES6] 14.4 Yield expression
+
+    function parseYieldExpression() {
+        var argument, expr, delegate, node = lookahead;
+
+        expr = new Node();
+
+        expectKeyword('yield');
+
+        if (!state.allowYield) {
+            tolerateUnexpectedToken(node, Messages.IllegalYield);
+        }
+
+        if (!hasLineTerminator) {
+            delegate = match('*');
+            if (delegate) {
+                lex();
+            }
+
+            if (!match(';') && !match('}') && lookahead.type !== Token.EOF) {
+                argument = parseExpression();
+            }
+        }
+
+        return expr.finishYieldExpression(argument, delegate);
+    }
+
     // 11.13 Assignment Operators
 
     function parseAssignmentExpression() {
@@ -3615,6 +3691,10 @@
 
         startToken = lookahead;
         token = lookahead;
+
+        if (matchKeyword('yield')) {
+            return parseYieldExpression();
+        }
 
         expr = parseConditionalExpression();
 
@@ -4591,9 +4671,16 @@
     }
 
     function parseFunctionDeclaration(node, identifierIsOptional) {
-        var id = null, params = [], defaults = [], body, token, stricted, tmp, firstRestricted, message, previousStrict;
+        var id = null, params = [], defaults = [], body, token, stricted, tmp, firstRestricted, message, previousStrict,
+            isGenerator, previousAllowYield;
 
         expectKeyword('function');
+
+        isGenerator = match('*');
+        if (isGenerator) {
+            lex();
+        }
+
         if (!identifierIsOptional || !match('(')) {
             token = lookahead;
             id = parseVariableIdentifier();
@@ -4612,7 +4699,11 @@
             }
         }
 
+        previousAllowYield = state.allowYield;
+        state.allowYield = false;
         tmp = parseParams(firstRestricted);
+        state.allowYield = previousAllowYield;
+
         params = tmp.params;
         defaults = tmp.defaults;
         stricted = tmp.stricted;
@@ -4621,7 +4712,9 @@
             message = tmp.message;
         }
 
+        previousAllowYield = state.allowYield;
         previousStrict = strict;
+        state.allowYield = isGenerator;
         body = parseFunctionSourceElements();
         if (strict && firstRestricted) {
             throwUnexpectedToken(firstRestricted, message);
@@ -4630,15 +4723,22 @@
             tolerateUnexpectedToken(stricted, message);
         }
         strict = previousStrict;
+        state.allowYield = previousAllowYield;
 
-        return node.finishFunctionDeclaration(id, params, defaults, body);
+        return node.finishFunctionDeclaration(id, params, defaults, body, isGenerator);
     }
 
     function parseFunctionExpression() {
         var token, id = null, stricted, firstRestricted, message, tmp,
-            params = [], defaults = [], body, previousStrict, node = new Node();
+            params = [], defaults = [], body, previousStrict, node = new Node(),
+            isGenerator, previousAllowYield;
 
         expectKeyword('function');
+
+        isGenerator = match('*');
+        if (isGenerator) {
+            lex();
+        }
 
         if (!match('(')) {
             token = lookahead;
@@ -4658,7 +4758,11 @@
             }
         }
 
+        previousAllowYield = state.allowYield;
+        state.allowYield = false;
         tmp = parseParams(firstRestricted);
+        state.allowYield = previousAllowYield;
+
         params = tmp.params;
         defaults = tmp.defaults;
         stricted = tmp.stricted;
@@ -4668,7 +4772,10 @@
         }
 
         previousStrict = strict;
+        previousAllowYield = state.allowYield;
+        state.allowYield = isGenerator;
         body = parseFunctionSourceElements();
+
         if (strict && firstRestricted) {
             throwUnexpectedToken(firstRestricted, message);
         }
@@ -4676,8 +4783,9 @@
             tolerateUnexpectedToken(stricted, message);
         }
         strict = previousStrict;
+        state.allowYield = previousAllowYield;
 
-        return node.finishFunctionExpression(id, params, defaults, body);
+        return node.finishFunctionExpression(id, params, defaults, body, isGenerator);
     }
 
 
@@ -4696,12 +4804,20 @@
                 token = lookahead;
                 isStatic = false;
                 computed = match('[');
-                key = parseObjectPropertyKey();
-                if (key.name === 'static' && lookaheadPropertyName()) {
+                if (match('*')) {
+                    lex();
+                } else {
+                    key = parseObjectPropertyKey();
+                }
+                if (key && key.name === 'static' && (lookaheadPropertyName() || match('*'))) {
                     token = lookahead;
                     isStatic = true;
                     computed = match('[');
-                    key = parseObjectPropertyKey();
+                    if (match('*')) {
+                        lex();
+                    } else {
+                        key = parseObjectPropertyKey();
+                    }
                 }
                 method = tryParseMethodDefinition(token, key, computed, method);
                 if (method) {
@@ -5127,12 +5243,14 @@
         lookahead = null;
         state = {
             allowIn: true,
+            allowYield: false,
             labelSet: {},
             inFunctionBody: false,
             inIteration: false,
             inSwitch: false,
             lastCommentStart: -1,
-            curlyStack: []
+            curlyStack: [],
+            isGenerator: false
         };
 
         extra = {};
@@ -5215,12 +5333,14 @@
         lookahead = null;
         state = {
             allowIn: true,
+            allowYield: false,
             labelSet: {},
             inFunctionBody: false,
             inIteration: false,
             inSwitch: false,
             lastCommentStart: -1,
-            curlyStack: []
+            curlyStack: [],
+            isGenerator: false
         };
         sourceType = 'script';
         strict = false;
