@@ -5249,8 +5249,7 @@
             inIteration: false,
             inSwitch: false,
             lastCommentStart: -1,
-            curlyStack: [],
-            isGenerator: false
+            curlyStack: []
         };
 
         extra = {};
@@ -5339,8 +5338,7 @@
             inIteration: false,
             inSwitch: false,
             lastCommentStart: -1,
-            curlyStack: [],
-            isGenerator: false
+            curlyStack: []
         };
         sourceType = 'script';
         strict = false;
