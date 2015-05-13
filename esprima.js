@@ -2280,7 +2280,7 @@
 
         finishYieldExpression: function (argument, delegate) {
             this.type = Syntax.YieldExpression;
-            this.arguments = argument;
+            this.argument = argument;
             this.delegate = delegate;
             this.finish();
             return this;
