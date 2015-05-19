@@ -1,6 +1,6 @@
 {
-    "name": "esprima",
-    "description": "ECMAScript parsing infrastructure for multipurpose analysis",
+    "name": "esprima-tot",
+    "description": "Esprima fork that supports the tot syntax",
     "homepage": "http://esprima.org",
     "main": "esprima.js",
     "bin": {
