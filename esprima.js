@@ -97,7 +97,7 @@
     FnExprTokens = ['(', '{', '[', 'in', 'typeof', 'instanceof', 'new',
                     'return', 'case', 'delete', 'throw', 'void',
                     // assignment operators
-                    '=', '+=', '-=', '*=', '/=', '%=', '<<=', '>>=', '>>>=',
+                    '=:', '=', '+=', '-=', '*=', '/=', '%=', '<<=', '>>=', '>>>=',
                     '&=', '|=', '^=', ',',
                     // binary/unary operators
                     '+', '-', '*', '/', '%', '++', '--', '<<', '>>', '>>>', '&',
@@ -784,7 +784,7 @@
                         str === '+=' || str === '-=' || str === '*=' || str === '/=' ||
                         str === '++' || str === '--' || str === '<<' || str === '>>' ||
                         str === '&=' || str === '|=' || str === '^=' || str === '%=' ||
-                        str === '<=' || str === '>=' || str === '=>') {
+                        str === '<=' || str === '>=' || str === '=>' || str === '=:') {
                         index += 2;
                     } else {
 
@@ -2469,6 +2469,7 @@
             op === '>>>=' ||
             op === '&=' ||
             op === '^=' ||
+            op === '=:' ||
             op === '|=';
     }
 
@@ -3762,6 +3763,10 @@
         if (match('=')) {
             lex();
             init = isolateCoverGrammar(parseAssignmentExpression);
+        } else if (match('=:')) {
+            lex();
+            init = isolateCoverGrammar(parseAssignmentExpression);
+            init.async = true
         } else if (id.type !== Syntax.Identifier) {
             expect('=');
         }

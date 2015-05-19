@@ -1,0 +1,23 @@
+function something(message, callback) {
+  setTimeout(function() {
+    if (message === 'bar') return callback(new Error('bar is not supported'))
+    callback(null, 'hello '+message)
+  }, 1)
+}
+
+function done() {
+  var args = Array.prototype.slice.call(arguments)
+  console.log('Done')
+  console.log(args.join('\n'))
+}
+
+try {
+  var foo =: something('foo')
+  var bar =: something('bar')
+  var baz =: something('baz')
+
+  done(foo, bar, baz)
+} catch(e) {
+  console.log('error', e.message)
+}
+
